@@ -1,0 +1,39 @@
+services:
+  redis:
+    image: "redis:7.2-alpine"
+    container_name: redis
+    command: --save 1 1 --loglevel warning --maxmemory-policy noeviction
+    volumes:
+      - redis-data:/data
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - hub-network
+
+  replicator:
+    build: .
+    container_name: replicator
+    command: npm start
+    environment:
+      - POSTGRES_URL=postgres://postgres:postgres@host.docker.internal:5432/replicator
+      - POSTGRES_MAX_POOL=100
+      - HUB_HOST=hubble:2283
+      - REDIS_URL=redis:6379
+    depends_on:
+      - redis
+    networks:
+      - hub-network
+
+volumes:
+  redis-data:
+
+networks:
+  hub-network:
+    name: hub-network
+    driver: bridge
