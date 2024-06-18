@@ -1,46 +1,28 @@
-import cors from 'cors';
-import dayjs from 'dayjs';
-import express from 'express';
-import { getAllCastsByChannelId } from './casts/getAllByChannel';
-import { getChannelByName } from './channel/getChannelByName';
-import { calPointsForCast, isLikedByHosts } from './leaderboard';
-import { dateBetween } from './utils';
+import cors from "cors";
+import dayjs from "dayjs";
+import express from "express";
+import { leaderboard } from "./routes/leaderboard";
 
 const port = 8080;
 const app = express();
 
 app.use(cors());
 
-app.get('/*', async (req, res) => {
-  const channelName = 'justbuild';
-  const channel = await getChannelByName(channelName);
-  const hosts = channel.hosts?.map((h) => h.fid) || [];
-  const casts = await getAllCastsByChannelId(channelName);
+app.use("/*", (req, _res, next) => {
+  const baseUrl = req.baseUrl;
+  console.log(`Captured base URL: ${baseUrl}`);
+  next();
+});
 
-  const castedAfter = dayjs.unix(Number(req.query.castedAfter));
-  const castedBefore = dayjs.unix(Number(req.query.castedBefore));
-
-  const points = casts
-    .filter(
-      (c) =>
-        dateBetween(dayjs(c.timestamp), castedAfter, castedBefore) &&
-        !hosts.includes(c.author.fid) &&
-        isLikedByHosts(c, hosts),
-    )
-    .reduce(
-      (acc, cast) => {
-        const author = cast.author.fid;
-        const points = calPointsForCast(cast);
-        const name = cast.author.display_name;
-        return { ...acc, [author]: { name, points: (acc[author]?.points || 0) + points } };
-      },
-      {} as { [key: string]: { fid: string; name: string; points: number } },
-    );
-
-  const result = Object.entries(points)
-    .sort((a, b) => b[1].points - a[1].points)
-    .map(([author, { name, points }]) => ({ author, name, points }));
-  res.send(result).end();
+app.use("/farcaster/leaderboard", async (req: express.Request, res: express.Response) => {
+  try {
+    const channelId = req.query.channelId as string;
+    const castedAfter = dayjs.unix(Number(req.query.castedAfter));
+    const castedBefore = dayjs.unix(Number(req.query.castedBefore));
+    res.send(await leaderboard(channelId, castedBefore, castedAfter));
+  } catch (err: any) {
+    res.status(err.status || 400).send({ error: err.error || "Unkown" });
+  }
 });
 
 const server = app.listen(port);

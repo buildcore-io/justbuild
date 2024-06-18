@@ -6,10 +6,8 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   await knex.schema.createTable("casts", (t) => {
-    t.uuid("id");
     t.timestamps(true, true);
     t.timestamp("timestamp");
-    t.timestamp("deleted_at");
 
     t.bigint("fid");
     t.binary("hash");
@@ -26,7 +24,6 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   await knex.schema.createTable("reactions", (t) => {
-    t.uuid("id");
     t.timestamps(true, true);
     t.timestamp("timestamp");
     t.timestamp("deleted_at");
@@ -43,7 +40,6 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   await knex.schema.createTable("user_data", (t) => {
-    t.uuid("id");
     t.timestamps(true, true);
     t.timestamp("timestamp");
     t.timestamp("deleted_at");
