@@ -2,7 +2,7 @@ FROM node:20
 
 WORKDIR /farcaster
 
-COPY packages/farcaster .
+COPY . .
 
 RUN npm i
 RUN npm run build
