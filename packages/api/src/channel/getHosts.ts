@@ -9,7 +9,7 @@ export const getChannelHosts = async (channelId: string) => {
       params: { channelId },
     };
     const response = await axios(options);
-    return response.data.result.channel.hostFids;
+    return response.data.result.channel.hostFids as number[];
   } catch {
     return [];
   }

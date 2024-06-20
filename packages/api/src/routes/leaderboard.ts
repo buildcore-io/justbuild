@@ -5,8 +5,10 @@ import { getReactionCounts } from "../casts/getReactionCounts";
 import { CastWithReactionCounts } from "../interfaces/casts";
 import { getUserNames } from "../users/getName";
 import { Dayjs } from "dayjs";
+import { bytesToHexString } from "@farcaster/hub-nodejs";
+import { database } from "../db";
 
-const justbuildUrl = "justbuild.today";
+const justbuildUrl = "/justbuild";
 
 const justbuildTagPoints = 5000;
 const pointsForCast = 10000;
@@ -44,8 +46,26 @@ export const leaderboard = async (
     const actPoints = calPointsForCast(act);
     const fid = act.fid;
     const points = (acc[fid]?.points || 0) + actPoints;
-    const cast_count = (acc[fid]?.cast_count || 0) + 1;
-    return { ...acc, [fid]: { points, cast_count } };
+    const casts = [
+      ...(acc[fid]?.casts || []),
+      {
+        hash: bytesToHexString(act.hash).unwrapOr(""),
+        timestamp: act.timestamp,
+        likes_count: act.likes_count,
+        recasts_count: act.recasts_count,
+        replies_count: act.replies_count,
+      },
+    ];
+    return {
+      ...acc,
+      [fid]: {
+        points,
+        cast_count: casts.length,
+        casts,
+        perDayBonus: 0,
+        justbuildTagBonus: 0,
+      },
+    };
   }, {} as { [key: string]: any });
 
   const castPerFidAndDate = Object.values(casts).reduce((acc, act) => {
@@ -55,14 +75,28 @@ export const leaderboard = async (
   for (const [key, count] of Object.entries(castPerFidAndDate)) {
     const fid = key.split("_")[0];
     points[fid].points += Math.min(count, 3) * pointsForCast;
+    points[fid].perDayBonus += Math.min(count, 3) * pointsForCast;
   }
 
-  const containsJustBuildUrl = Object.values(casts).reduce((acc, act) => {
-    const hasJustbuildTag = act.text.includes(justbuildUrl);
-    return { ...acc, [act.fid]: acc[act.fid] || hasJustbuildTag };
-  }, {} as { [key: string]: boolean });
-  for (const [fid, hasJustbuildTag] of Object.entries(containsJustBuildUrl)) {
-    points[fid].points += hasJustbuildTag ? justbuildTagPoints : 0;
+  const castsWithJustbuildTag = await database("casts")
+    .whereBetween("timestamp", [castedAfter, castedBefore])
+    .whereILike("text", `%${justbuildUrl}%`)
+    .whereNotIn("fid", hosts);
+
+  const containsJustBuildUrl = Object.values(castsWithJustbuildTag).reduce(
+    (acc, act) => {
+      const hasJustbuildTag = act.text.includes(justbuildUrl);
+      return hasJustbuildTag ? { ...acc, [act.fid]: true } : acc;
+    },
+    {} as { [key: string]: boolean }
+  );
+
+  for (const [fid, _] of Object.entries(containsJustBuildUrl)) {
+    points[fid] = {
+      ...points[fid],
+      points: (points[fid]?.points || 0) + justbuildTagPoints,
+      justbuildTagBonus: justbuildTagPoints,
+    };
   }
 
   const users = await getUserNames(...Object.keys(points));

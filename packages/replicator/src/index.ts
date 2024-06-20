@@ -2,7 +2,11 @@ import { HubRpcClient, getInsecureHubRpcClient } from "@farcaster/hub-nodejs";
 import { FROM_EVENT_ID, HUB_HOST, REDIS_URL } from "./env";
 import { Redis } from "ioredis";
 import { backfill } from "./backfill/backfill";
-import { LAST_EVENT_ID_KEY, runWithRetry } from "./utils";
+import {
+  LAST_EVENT_ID_KEY,
+  runWithRetry,
+  waitForReadyHubClient,
+} from "./utils";
 import { processEvents } from "./events/events";
 
 const hub = getInsecureHubRpcClient(HUB_HOST);
@@ -40,16 +44,5 @@ const setLastEventId = async () => {
     break;
   }
 };
-
-const waitForReadyHubClient = (hub: HubRpcClient) =>
-  new Promise<void>((res, rej) => {
-    hub.$.waitForReady(Date.now() + 5000, (e) => {
-      if (e) {
-        console.error("Could not connect to hub");
-        return rej(e);
-      }
-      return res();
-    });
-  });
 
 main();

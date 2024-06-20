@@ -1,4 +1,4 @@
-import { HubResult } from "@farcaster/hub-nodejs";
+import { HubResult, HubRpcClient } from "@farcaster/hub-nodejs";
 
 export const runWithRetry = async <T>(
   func: () => Promise<HubResult<T>>,
@@ -17,3 +17,14 @@ export const runWithRetry = async <T>(
 };
 
 export const LAST_EVENT_ID_KEY = "last-hub-event-id";
+
+export const waitForReadyHubClient = (hub: HubRpcClient) =>
+  new Promise<void>((res, rej) => {
+    hub.$.waitForReady(Date.now() + 5000, (e) => {
+      if (e) {
+        console.error("Could not connect to hub");
+        return rej(e);
+      }
+      return res();
+    });
+  });
