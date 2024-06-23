@@ -1,7 +1,6 @@
 import { HubRpcClient, Message } from "@farcaster/hub-nodejs";
 import { database } from "../db";
 import { Cast } from "../interfaces/casts";
-import { getChannelHosts } from "../channel/getHosts";
 
 export const banUserFromChannel = async (
   hub: HubRpcClient,
@@ -21,24 +20,38 @@ export const banUserFromChannel = async (
       const root = "https://warpcast.com/~/channel/";
       const channelId = cast?.parent_url?.replace(root, "") || "";
 
-      const hosts = await getChannelHosts(channelId);
+      const channel = await database("channels")
+        .where({ channel_id: channelId })
+        .first();
 
       const fid = result.value.message?.data?.fid!;
-      if (!hosts.includes(fid)) {
+      if (!channel?.hosts?.includes(fid)) {
         throw {
           status: 400,
           error: "You must be a channel host to ban a user",
         };
       }
 
-      await database("blocked_fids")
-        .insert({ channel_id: channelId, fid, target_fid })
-        .onConflict(["channel_id", "target_fid"])
-        .ignore();
+      const blockedUsername = await database("user_data")
+        .where({ fid: target_fid, type: 2 })
+        .first();
+
+      if (channel?.banned?.includes(target_fid)) {
+        return {
+          type: "message",
+          message: `${blockedUsername.value} already blocked from ${channelId}.`,
+        };
+      }
+
+      await database("channels")
+        .where({ channel_id: channelId })
+        .update({
+          banned: database.raw("array_append(banned, ?)", [target_fid]),
+        });
 
       return {
         type: "message",
-        message: `${target_fid} was blocked from ${channelId} channel by ${fid}`,
+        message: `${blockedUsername.value} blocked from ${channelId}.`,
       };
     }
 

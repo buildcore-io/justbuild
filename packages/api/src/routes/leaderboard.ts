@@ -1,14 +1,5 @@
-import { getChannelHosts } from "../channel/getHosts";
-import { isEmpty } from "lodash";
-import { getCastsLikedByHosts } from "../casts/getLikesByHosts";
-import { getReactionCounts } from "../casts/getReactionCounts";
-import { CastWithReactionCounts } from "../interfaces/casts";
-import { getUserNames } from "../users/getName";
 import { Dayjs } from "dayjs";
-import { bytesToHexString } from "@farcaster/hub-nodejs";
 import { database } from "../db";
-
-const justbuildUrl = "/justbuild";
 
 const justbuildTagPoints = 5000;
 const pointsForCast = 10000;
@@ -20,13 +11,11 @@ const divider = 100;
 export const leaderboard = async (
   channelId: string,
   castedBefore: Dayjs,
-  castedAfter: Dayjs
+  castedAfter: Dayjs,
+  fid: string | undefined,
+  offset: number,
+  limit: number
 ) => {
-  const hosts = await getChannelHosts(channelId);
-  if (isEmpty(hosts)) {
-    throw { status: 400, error: `Channel ${channelId} has no hosts` };
-  }
-
   if (!castedAfter.isValid() || !castedBefore.isValid()) {
     throw { status: 400, error: "castedBefore and castedAfter are required" };
   }
@@ -34,92 +23,148 @@ export const leaderboard = async (
     throw { status: 400, error: "castedAfter must be before castedBefore" };
   }
 
-  const casts = await getCastsLikedByHosts(
-    channelId,
-    hosts,
-    castedAfter,
-    castedBefore
-  );
-  const castsWithReactionCounts = await getReactionCounts(casts);
+  const channel = await database("channels")
+    .where({ channel_id: channelId })
+    .first();
 
-  const points = Object.values(castsWithReactionCounts).reduce((acc, act) => {
-    const actPoints = calPointsForCast(act);
-    const fid = act.fid;
-    const points = (acc[fid]?.points || 0) + actPoints;
-    const casts = [
-      ...(acc[fid]?.casts || []),
-      {
-        hash: bytesToHexString(act.hash).unwrapOr(""),
-        timestamp: act.timestamp,
-        likes_count: act.likes_count,
-        recasts_count: act.recasts_count,
-        replies_count: act.replies_count,
-      },
-    ];
-    return {
-      ...acc,
-      [fid]: {
-        points,
-        cast_count: casts.length,
-        casts,
-        perDayBonus: 0,
-        justbuildTagBonus: 0,
-      },
+  const castsLikedByHosts = database("casts as c")
+    .select("c.fid", "c.hash", "c.timestamp")
+    .where({ parent_url: `https://warpcast.com/~/channel/${channelId}` })
+    .whereNotIn("c.fid", [...(channel?.hosts || []), ...(channel?.banned || [])])
+    .whereBetween("c.timestamp", [
+      castedAfter.toISOString(),
+      castedBefore.toISOString(),
+    ])
+    .join("reactions as r", function () {
+      this.on("c.hash", "=", "r.target_cast_hash")
+        .andOnVal("r.type", 1)
+        .andOnIn("r.fid", channel?.hosts || []);
+    })
+    .groupBy("c.fid", "c.hash", "c.timestamp")
+    .as("casts_liked_by_hosts");
+
+  const reactionsForCasts = database(castsLikedByHosts)
+    .select(
+      database.raw(`
+    casts_liked_by_hosts.fid as fid,
+    casts_liked_by_hosts.hash as hash,
+    (select COUNT(*) from reactions as likes WHERE likes.target_cast_hash = casts_liked_by_hosts.hash and likes.type = 2) as recasts,
+    (select COUNT(*) from reactions as likes WHERE likes.target_cast_hash = casts_liked_by_hosts.hash and likes.type = 1) as likes,
+    (select COUNT(*) from casts as repl WHERE repl.parent_hash = casts_liked_by_hosts.hash) as replies
+    `)
+    )
+    .groupBy("casts_liked_by_hosts.hash", "casts_liked_by_hosts.fid")
+    .as("reactions_for_casts");
+
+  const reactionsForFids = database(reactionsForCasts)
+    .select(
+      database.raw(`
+      reactions_for_casts.fid as fid,
+      SUM(recasts)::integer as recasts, 
+      SUM(likes)::integer  as likes, 
+      SUM(replies)::integer  as replies,
+      COUNT(reactions_for_casts.fid)::integer as cast_count
+    `)
+    )
+    .groupBy("reactions_for_casts.fid")
+    .as("reactions_for_fids");
+
+  const castsForEachDay = database(castsLikedByHosts)
+    .select(
+      database.raw(`
+    casts_liked_by_hosts.fid as fid, 
+    to_char(timestamp, 'mm-dd-YYYY') as day,
+    case when COUNT(*) <= 3 then COUNT(*) else 3 end as casts_per_day`)
+    )
+    .groupBy("casts_liked_by_hosts.fid", "day")
+    .as("casts_for_each_day");
+
+  const totalCastPerDay = database(castsForEachDay)
+    .select(
+      database.raw(`
+      casts_for_each_day.fid as fid, 
+      sum(casts_per_day)::integer as casts_per_day_sum
+    `)
+    )
+    .groupBy("casts_for_each_day.fid")
+    .as("total_cast_per_day");
+
+  const hasJustBuildTagQuery = database("casts as cc")
+    .select(
+      database.raw(`
+      cc.fid,
+      (select ud.value from user_data as ud where ud.fid = cc.fid and type = 2) as display_name,
+      (select ud.value from user_data as ud where ud.fid = cc.fid and type = 6) as username
+   `)
+    )
+    .whereNull("parent_hash")
+    .whereBetween("timestamp", [
+      castedAfter.toISOString(),
+      castedBefore.toISOString(),
+    ])
+    .whereILike("text", `%/justbuild%`)
+    .whereNotIn("cc.fid", [
+      ...(channel?.hosts || []),
+      ...(channel?.banned || []),
+    ])
+    .groupBy("cc.fid")
+    .as("has_just_build_tag");
+
+  const finalReactionsQuery = database(reactionsForFids)
+    .select(
+      database.raw(`
+          reactions_for_fids.*,
+          total_cast_per_day.casts_per_day_sum,
+          (select ud.value from user_data as ud where ud.fid = reactions_for_fids.fid and type = 2) as display_name,
+          (select ud.value from user_data as ud where ud.fid = reactions_for_fids.fid and type = 6) as username
+       `)
+    )
+    .leftJoin(
+      totalCastPerDay,
+      "reactions_for_fids.fid",
+      "total_cast_per_day.fid"
+    )
+    .as("final_reactions");
+
+  const [hasJustBuildTag, finalReactions] = await Promise.all([
+    hasJustBuildTagQuery,
+    finalReactionsQuery,
+  ]);
+
+  const result: { [key: string]: any } = {};
+  for (const { fid, display_name, username } of hasJustBuildTag) {
+    result[fid] = {
+      fid,
+      display_name,
+      username,
+      points: justbuildTagPoints,
+      cast_count: 0,
     };
-  }, {} as { [key: string]: any });
-
-  const castPerFidAndDate = Object.values(casts).reduce((acc, act) => {
-    const key = `${act.fid}_${act.timestamp.toISOString().split("T")[0]}`;
-    return { ...acc, [key]: (acc[key] || 0) + 1 };
-  }, {} as { [key: string]: number });
-  for (const [key, count] of Object.entries(castPerFidAndDate)) {
-    const fid = key.split("_")[0];
-    points[fid].points += Math.min(count, 3) * pointsForCast;
-    points[fid].perDayBonus += Math.min(count, 3) * pointsForCast;
+  }
+  for (const s of finalReactions) {
+    result[s.fid] = {
+      ...result[s.fid],
+      fid: s.fid,
+      display_name: s.display_name,
+      username: s.username,
+      points:
+        (result[s.fid]?.points || 0) +
+        calPointsForCast(s.likes, s.replies, s.recasts) +
+        s.casts_per_day_sum * pointsForCast,
+      cast_count: s.cast_count,
+    };
   }
 
-  const castsWithJustbuildTag = await database("casts")
-    .whereBetween("timestamp", [castedAfter, castedBefore])
-    .whereILike("text", `%${justbuildUrl}%`)
-    .whereNotIn("fid", hosts);
+  const sorted = Object.values(result)
+    .sort((a, b) => b.points - a.points)
+    .map((r, i) => ({ ...r, position: i + 1 }));
 
-  const containsJustBuildUrl = Object.values(castsWithJustbuildTag).reduce(
-    (acc, act) => {
-      const hasJustbuildTag = act.text.includes(justbuildUrl);
-      return hasJustbuildTag ? { ...acc, [act.fid]: true } : acc;
-    },
-    {} as { [key: string]: boolean }
-  );
-
-  for (const [fid, _] of Object.entries(containsJustBuildUrl)) {
-    points[fid] = {
-      ...points[fid],
-      points: (points[fid]?.points || 0) + justbuildTagPoints,
-      justbuildTagBonus: justbuildTagPoints,
-    };
-  }
-
-  const users = await getUserNames(...Object.keys(points));
-  for (const user of Object.values(users)) {
-    points[user.fid] = {
-      ...points[user.fid],
-      display_name: user.display_name,
-      username: user.username,
-    };
-  }
-
-  return Object.entries(points)
-    .map(([fid, p]) => ({ fid: Number(fid), ...p }))
-    .sort((a, b) => b.points - a.points);
+  return fid
+    ? sorted.filter((s) => s.fid === fid)
+    : sorted.slice(offset, limit);
 };
 
-export const calPointsForCast = (cast: CastWithReactionCounts) => {
-  const likes = cast.likes_count;
-  const replies = cast.replies_count;
-  const recasts = cast.recasts_count;
-  return (
-    (likes / divider) * pointsForCast * multiplierForLike +
-    (replies / divider) * pointsForCast * multiplierForReplies +
-    (recasts / divider) * pointsForCast * multiplierForRecasts
-  );
-};
+const calPointsForCast = (likes: number, replies: number, recasts: number) =>
+  (likes / divider) * pointsForCast * multiplierForLike +
+  (replies / divider) * pointsForCast * multiplierForReplies +
+  (recasts / divider) * pointsForCast * multiplierForRecasts;

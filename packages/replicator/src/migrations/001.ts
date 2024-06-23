@@ -55,11 +55,9 @@ export async function up(knex: Knex): Promise<void> {
 
   await knex.raw(`
     create index cast_hash_idx on casts(hash);
-    create index casts_pk_index on casts(fid,hash);
     create index casts_parent_url_index on casts(parent_url);
     create index casts_parent_hash_idx on casts(parent_hash);
 
-    create index reaction_pk_index on reactions(fid,hash);
     create index reaction_fid_target_index on reactions(fid,target_cast_fid,target_cast_hash);
     create index reactions_target_hash_idx on reactions(target_cast_fid,target_cast_hash);
     
