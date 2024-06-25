@@ -156,11 +156,15 @@ const convertEventsToPg = (events: HubEvent[]) => {
         reactionsToAdd.push(reactionToPg(message));
         break;
       case MessageType.REACTION_REMOVE:
-        reactionsToRemove.push({
-          fid: message.data.fid,
-          target_cast_fid: message.data.reactionBody?.targetCastId?.fid,
-          target_cast_hash: message.data.reactionBody?.targetCastId?.hash!,
-        });
+        const target_cast_fid = message.data.reactionBody?.targetCastId?.fid;
+        const target_cast_hash = message.data.reactionBody?.targetCastId?.hash;
+        if (target_cast_fid && target_cast_hash) {
+          reactionsToRemove.push({
+            fid: message.data.fid,
+            target_cast_fid,
+            target_cast_hash,
+          });
+        }
         break;
       case MessageType.USER_DATA_ADD:
         const userData = userDataToPg(message);
