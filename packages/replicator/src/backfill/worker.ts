@@ -7,6 +7,7 @@ import { userDataToPg } from "./user";
 import { BACKFILL_QEUE_NAME, moveAllByFidToPg } from "./utils";
 import { Redis } from "ioredis";
 import os from "os";
+import { linksToPg } from "./links";
 
 export const createWorker = (
   db: Knex.Knex,
@@ -52,6 +53,7 @@ const migrateAllDataForFid = (
     "fid",
     "type",
   ]),
+  moveAllByFidToPg(db, "links", hub.getLinksByFid, linksToPg, fid, ["hash"]),
 ];
 
 const saveFid = async (db: Knex.Knex, fid: number) => {

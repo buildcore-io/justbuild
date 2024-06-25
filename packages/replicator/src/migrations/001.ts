@@ -53,6 +53,17 @@ export async function up(knex: Knex): Promise<void> {
     t.text("value");
   });
 
+  await knex.schema.createTable("links", (t) => {
+    t.timestamps(true, true);
+    t.timestamp("timestamp");
+
+    t.bigint("fid");
+    t.binary("hash").primary();
+
+    t.string("type");
+    t.bigint("target_fid");
+  });
+
   await knex.raw(`
     create index cast_hash_idx on casts(hash);
     create index casts_parent_url_index on casts(parent_url);
